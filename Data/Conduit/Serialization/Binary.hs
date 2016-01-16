@@ -6,6 +6,7 @@ module Data.Conduit.Serialization.Binary
   , conduitEncode
   , conduitMsgEncode
   , conduitGet
+  , conduitGetEither
   , conduitPut
   , conduitPutList
   , conduitPutLBS
@@ -27,7 +28,7 @@ import           Data.Conduit
 import qualified Data.Conduit.List    as CL
 import           Data.Typeable
 import qualified Data.Vector          as V
-import           Control.Monad.Trans.Resource 
+import           Control.Monad.Trans.Resource
      (MonadThrow
      , monadThrow)
 
@@ -52,7 +53,7 @@ conduitDecode = conduitGet get
 --
 -- This function produces a stream of bytes where for each input
 -- value you will have a number of 'ByteString's, and no boundary
--- between different values. 
+-- between different values.
 conduitEncode :: (Binary b, MonadThrow m) => Conduit b m ByteString
 conduitEncode = CL.map put =$= conduitPut
 
@@ -86,6 +87,23 @@ conduitGet g = start
                             then start
                             else go (runGetIncremental g `pushChunk` bs)
     go (Fail u o e)  = monadThrow (ParseError u o e)
+    go (Partial n)   = await >>= (go . n)
+
+conduitGetEither :: Monad m => Get b -> Conduit ByteString m (Either String b)
+conduitGetEither g = start
+  where
+    start = do mx <- await
+               case mx of
+                  Nothing -> return ()
+                  Just x -> go (runGetIncremental g `pushChunk` x)
+    go (Done bs _ v) = do yield $ Right v
+                          if BS.null bs
+                            then start
+                            else go (runGetIncremental g `pushChunk` bs)
+    go (Fail bs _ e) = do yield $ Left e
+                          if BS.null bs
+                            then start
+                            else go (runGetIncremental g `pushChunk` bs)
     go (Partial n)   = await >>= (go . n)
 
 -- \o/
